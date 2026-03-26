@@ -1,0 +1,65 @@
+{
+  "title": "Gaussian Splatting Pipeline",
+  "description": "Full 3D Gaussian Splatting pipeline: downloads a 360° video, extracts sharp frames, runs COLMAP reconstruction, and trains a Gaussian splat model using Brush. Outputs .ply files.",
+  "type": "serverless",
+  "category": "video",
+  "config": {
+    "runsOn": "GPU",
+    "containerDiskInGb": 30,
+    "gpuCount": 1,
+    "gpuIds": "ADA_24",
+    "allowedCudaVersions": [
+      "12.8",
+      "12.7",
+      "12.6",
+      "12.5",
+      "12.4",
+      "12.3",
+      "12.2"
+    ],
+    "env": [
+      {
+        "key": "FPS",
+        "input": {
+          "name": "Frames per second",
+          "type": "number",
+          "description": "FPS to extract from the input video. Higher = more frames = better quality but slower.",
+          "min": 1,
+          "max": 30,
+          "default": 3,
+          "advanced": false
+        }
+      },
+      {
+        "key": "STAGE",
+        "input": {
+          "name": "Pipeline stage",
+          "type": "string",
+          "description": "How far to run the pipeline. Use 'colmap' to stop before training.",
+          "options": [
+            {"label": "Extract only", "value": "extract"},
+            {"label": "Extract + COLMAP", "value": "colmap"},
+            {"label": "Full pipeline (Extract + COLMAP + Brush)", "value": "brush"}
+          ],
+          "default": "brush"
+        }
+      }
+    ],
+    "presets": [
+      {
+        "name": "Quick Test (low FPS)",
+        "defaults": {
+          "FPS": 1,
+          "STAGE": "brush"
+        }
+      },
+      {
+        "name": "High Quality",
+        "defaults": {
+          "FPS": 5,
+          "STAGE": "brush"
+        }
+      }
+    ]
+  }
+}

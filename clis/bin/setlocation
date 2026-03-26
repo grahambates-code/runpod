@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+
+#
+# Set the lat, lon of an image file with exiftool
+# Copyright (c) 2025 Rodrigo Polo - rodrigopolo.com - The MIT License (MIT)
+#
+
+import sys
+import subprocess
+
+def dd_to_dms(decimal):
+    """Convert decimal degrees to (degrees, minutes, seconds) with full precision."""
+    absolute = abs(decimal)
+    degrees = int(absolute)
+    minutes_float = (absolute - degrees) * 60
+    minutes = int(minutes_float)
+    seconds = (minutes_float - minutes) * 60
+    return degrees, minutes, seconds
+
+def main():
+    if len(sys.argv) < 4:
+        script = sys.argv[0].split("/")[-1]
+        print(f"Usage: {script} <latitude> <longitude> <filename1> [<filename2> ...]")
+        sys.exit(1)
+
+    latitude  = float(sys.argv[1].replace(",", ""))
+    longitude = float(sys.argv[2].replace(",", ""))
+    filenames = sys.argv[3:]
+
+    lat_ref  = "North" if latitude  >= 0 else "South"
+    long_ref = "East"  if longitude >= 0 else "West"
+
+    lat_d,  lat_m,  lat_s  = dd_to_dms(latitude)
+    long_d, long_m, long_s = dd_to_dms(longitude)
+
+    lat_dms  = f"{lat_d} {lat_m} {lat_s}"
+    long_dms = f"{long_d} {long_m} {long_s}"
+
+    for filename in filenames:
+        result = subprocess.run([
+            "exiftool", "-overwrite_original",
+            f"-GPSLatitude={lat_dms}",   f"-GPSLatitudeRef={lat_ref}",
+            f"-GPSLongitude={long_dms}", f"-GPSLongitudeRef={long_ref}",
+            filename
+        ], capture_output=True, text=True)
+
+        if result.returncode == 0:
+            print(f"GPS coordinates set for {filename}")
+        else:
+            print(f"Error processing {filename}: {result.stderr.strip()}", file=sys.stderr)
+
+if __name__ == "__main__":
+    main()

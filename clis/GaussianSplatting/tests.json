@@ -1,0 +1,26 @@
+{
+  "tests": [
+    {
+      "name": "extract_only",
+      "input": {
+        "url": "https://huggingface.co/datasets/nerfstudio-project/nerfstudio-dataset/resolve/main/poster.mp4",
+        "fps": 1,
+        "stage": "extract"
+      },
+      "timeout": 120000
+    }
+  ],
+  "config": {
+    "gpuTypeId": "NVIDIA GeForce RTX 4090",
+    "gpuCount": 1,
+    "allowedCudaVersions": [
+      "12.8",
+      "12.7",
+      "12.6",
+      "12.5",
+      "12.4",
+      "12.3",
+      "12.2"
+    ]
+  }
+}

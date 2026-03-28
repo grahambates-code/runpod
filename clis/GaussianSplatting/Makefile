@@ -1,27 +1,55 @@
 .PHONY: setup extract colmap brush docker-build docker-run
 
-# ── Local (macOS) targets ────────────────────────────────────────────────────
+# ── OS and Architecture Detection ───────────────────────────────────────────
+OS := $(shell uname -s)
+ARCH := $(shell uname -m)
+
+# Define the Brush version
+BRUSH_VERSION := v0.3.0
+LOCAL_BIN := $(HOME)/.local/bin
+
+# ── Setup Target (Cross-Platform) ───────────────────────────────────────────
 
 setup:
-	@echo "Installing dependencies..."
+	@echo "Detected OS: $(OS), Architecture: $(ARCH)"
+	@echo "Installing Python dependencies..."
 	pip3 install Pillow scipy sharp-frames pycolmap --user || python3 -m pip install Pillow scipy sharp-frames pycolmap --user || true
-	brew install ffmpeg xz pyenv || true
-	mkdir -p ~/.local/bin
-	curl -sL https://github.com/ArthurBrussee/brush/releases/download/v0.3.0/brush-app-aarch64-apple-darwin.tar.xz | tar xJf -
-	mv brush-app-aarch64-apple-darwin/brush_app ~/.local/bin/brush
-	rm -rf brush-app-aarch64-apple-darwin
+	
+	@if [ "$(OS)" = "Darwin" ]; then \
+		echo "Installing macOS system dependencies via Homebrew..."; \
+		brew install ffmpeg xz pyenv || true; \
+		BRUSH_URL="https://github.com/ArthurBrussee/brush/releases/download/$(BRUSH_VERSION)/brush-app-aarch64-apple-darwin.tar.xz"; \
+		BRUSH_DIR="brush-app-aarch64-apple-darwin"; \
+	elif [ "$(OS)" = "Linux" ]; then \
+		echo "Installing Linux system dependencies via apt-get..."; \
+		apt-get update && apt-get install -y ffmpeg xz-utils curl python3-pip || true; \
+		BRUSH_URL="https://github.com/ArthurBrussee/brush/releases/download/$(BRUSH_VERSION)/brush-app-x86_64-unknown-linux-gnu.tar.xz"; \
+		BRUSH_DIR="brush-app-x86_64-unknown-linux-gnu"; \
+	fi; \
+	\
+	echo "Downloading and installing Brush from: $$BRUSH_URL"; \
+	mkdir -p $(LOCAL_BIN); \
+	curl -sL $$BRUSH_URL | tar xJf -; \
+	mv $$BRUSH_DIR/brush_app $(LOCAL_BIN)/brush; \
+	rm -rf $$BRUSH_DIR; \
+	echo "Setup complete. Ensure $(LOCAL_BIN) is in your PATH."
+
+# ── Script Execution Targets ────────────────────────────────────────────────
+
+# Dynamic PATH construction to include local python bins and the brush bin
+ENV_PATH := PATH="$$(python3 -m site --user-base)/bin:$(LOCAL_BIN):$$PATH"
 
 extract:
-	@echo "Running Extract.sh on 360.mp4..."
-	PATH="$$(python3 -m site --user-base)/bin:$$PATH" ./Exctract.sh --scenedir ~/Desktop/Project --fps 3 ../360.mp4
+	@echo "Running Extract.sh..."
+	$(ENV_PATH) ./Exctract.sh --scenedir ~/Desktop/Project --fps 3 ../360.mp4
 
 colmap:
 	@echo "Running A1PyColmap.py..."
-	PATH="$$(python3 -m site --user-base)/bin:$$PATH" ./A1PyColmap.py --scenedir ~/Desktop/Project
+	$(ENV_PATH) ./A1PyColmap.py --scenedir ~/Desktop/Project
 
 brush:
 	@echo "Running Brush.sh..."
-	PATH="$$(python3 -m site --user-base)/bin:$${HOME}/.local/bin:$$PATH" ./Brush.sh --scenedir ~/Desktop/Project
+	$(ENV_PATH) ./Brush.sh --scenedir ~/Desktop/Project
 
 # ── Docker targets ───────────────────────────────────────────────────────────
 
@@ -44,7 +72,6 @@ endif
 		$(IMAGE_NAME) \
 		/opt/gaussian-splatting/entrypoint.sh --fps $(FPS) --stage $(STAGE) $(URL)
 
-# Run extract + colmap only (no GPU needed, works on Mac)
 docker-test:
 ifndef URL
 	$(error URL is required. Usage: make docker-test URL=https://example.com/360.mp4)

@@ -4,17 +4,17 @@ Run COLMAP reconstruction using pycolmap (Python bindings).
 
 Adapted from:
   https://github.com/colmap/colmap/blob/main/python/examples/panorama_sfm.py
-
-Usage:
-  ./A1PyColmap.py [OPTIONS]
-
-Options:
-  --scenedir <path>   Working directory with images/ subfolder (required)
-  -h, --help          Show this help message
 """
 
 import argparse
 import os
+
+# --- LINUX DEADLOCK FIXES ---
+os.environ["OMP_NUM_THREADS"] = "1"
+import cv2
+cv2.setNumThreads(0)
+# ----------------------------
+
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -22,7 +22,6 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal, TypeVar, cast
 
-import cv2
 import numpy as np
 import numpy.typing as npt
 import PIL.ExifTags
@@ -53,7 +52,6 @@ PANO_RENDER_OPTIONS: dict[str, PanoRenderOptions] = {
         hfov_deg=90.0,
         vfov_deg=90.0,
     ),
-    # Cubemap without top and bottom images.
     "non-overlapping": PanoRenderOptions(
         num_steps_yaw=4,
         pitches_deg=(0.0,),
@@ -69,15 +67,12 @@ def create_virtual_camera(
     hfov_deg: float,
     vfov_deg: float,
 ) -> pycolmap.Camera:
-    """Create a virtual perspective camera."""
-    # image_width = int(pano_width * hfov_deg / 360)
-    # image_height = int(pano_height * vfov_deg / 180)
-    image_width = int(pano_width / np.pi) & ~1  # round down to even
+    image_width = int(pano_width / np.pi) & ~1 
     image_height = image_width
     focal = image_width / (2 * np.tan(np.deg2rad(hfov_deg) / 2))
-    return pycolmap.Camera.create(
+    return pycolmap.Camera.create_from_model_name(
         camera_id=0,
-        model=pycolmap.CameraModelId.SIMPLE_PINHOLE,
+        model_name="SIMPLE_PINHOLE",
         focal_length=focal,
         width=image_width,
         height=image_height,
@@ -90,7 +85,6 @@ def get_virtual_camera_rays(
     size = (camera.width, camera.height)
     x, y = np.indices(size).astype(np.float32)
     xy: NDArrayNx2 = np.column_stack([x.ravel(), y.ravel()])
-    # The center of the upper left most pixel has coordinate (0.5, 0.5)
     xy += 0.5
     xy_norm: NDArrayNx2 = camera.cam_from_img(image_points=xy)
     rays = np.concatenate([xy_norm, np.ones_like(xy_norm[:, :1])], -1)
@@ -101,7 +95,6 @@ def get_virtual_camera_rays(
 def spherical_img_from_cam(
     image_size: tuple[int, int], rays_in_cam: npt.NDArray[np.floating]
 ) -> npt.NDArray[np.floating]:
-    """Project rays into a 360 panorama (spherical) image."""
     if image_size[0] != image_size[1] * 2:
         raise ValueError("Only 360° panoramas are supported.")
     if rays_in_cam.ndim != 2 or rays_in_cam.shape[1] != 3:
@@ -117,8 +110,6 @@ def spherical_img_from_cam(
 def get_virtual_rotations(
     num_steps_yaw: int, pitches_deg: Sequence[float]
 ) -> Sequence[npt.NDArray[np.floating]]:
-    """Get the relative rotations of the virtual cameras w.r.t. the panorama."""
-    # Assuming that the panos are approximately upright.
     cams_from_pano_r = []
     yaws = np.linspace(0, 360, num_steps_yaw, endpoint=False)
     for pitch_deg in pitches_deg:
@@ -135,7 +126,6 @@ def create_pano_rig_config(
     cams_from_pano_rotation: Sequence[npt.NDArray[np.floating]],
     ref_idx: int = 0,
 ) -> pycolmap.RigConfig:
-    """Create a RigConfig for the given virtual rotations."""
     rig_cameras = []
     zero_translation = cast(NDArray3x1, np.zeros((3, 1), dtype=np.float64))
     for idx, cam_from_pano_rotation in enumerate(cams_from_pano_rotation):
@@ -178,16 +168,11 @@ class PanoProcessor:
         )
         self.rig_config = create_pano_rig_config(self.cams_from_pano_rotation)
 
-        # We assign each pano pixel to the virtual camera
-        # with the closest camera center.
         self.cam_centers_in_pano = np.einsum(
             "nij,i->nj", self.cams_from_pano_rotation, [0, 0, 1]
         )
 
         self._lock = Lock()
-
-        # These are initialized on the first pano image
-        # to avoid recomputing the rays for each pano image.
         self._camera: pycolmap.Camera | None = None
         self._pano_size: tuple[int, int] | None = None
         self._rays_in_cam: npt.NDArray[np.floating] | None = None
@@ -212,7 +197,7 @@ class PanoProcessor:
             raise ValueError("Only 360° panoramas are supported.")
 
         with self._lock:
-            if self._camera is None:  # First image, precompute rays once.
+            if self._camera is None:
                 self._camera = create_virtual_camera(
                     pano_width=pano_width,
                     pano_height=pano_height,
@@ -223,7 +208,7 @@ class PanoProcessor:
                     rig_camera.camera = self._camera
                 self._pano_size = (pano_width, pano_height)
                 self._rays_in_cam = get_virtual_camera_rays(self._camera)
-            else:  # Later images, verify consistent panoramas.
+            else:
                 if (pano_width, pano_height) != self._pano_size:
                     raise ValueError(
                         "Panoramas of different sizes are not supported."
@@ -236,7 +221,7 @@ class PanoProcessor:
             xy_in_pano = xy_in_pano.reshape(
                 self._camera.width, self._camera.height, 2
             ).astype(np.float32)
-            xy_in_pano -= 0.5  # COLMAP to OpenCV pixel origin.
+            xy_in_pano -= 0.5
             x_coords, y_coords = np.moveaxis(xy_in_pano, [0, 1, 2], [2, 1, 0])
             image = cv2.remap(
                 pano_image,
@@ -245,8 +230,6 @@ class PanoProcessor:
                 cv2.INTER_LINEAR,
                 borderMode=cv2.BORDER_WRAP,
             )
-            # We define a mask such that each pixel of the panorama has its
-            # features extracted only in a single virtual camera.
             closest_camera = np.argmax(
                 rays_in_pano @ self.cam_centers_in_pano.T, -1
             )
@@ -284,7 +267,10 @@ def render_perspective_images(
     )
 
     num_panos = len(pano_image_names)
-    max_workers = min(32, (os.cpu_count() or 2) - 1)
+    
+    # --- LINUX DEADLOCK FIX ---
+    # We lower the max_workers so the Docker container doesn't get overwhelmed
+    max_workers = min(6, (os.cpu_count() or 2) - 1)
 
     with tqdm(total=num_panos) as pbar:
         with ThreadPoolExecutor(max_workers=max_workers) as thread_pool:
@@ -302,7 +288,6 @@ def render_perspective_images(
 def run(args: argparse.Namespace) -> None:
     pycolmap.set_random_seed(0)
 
-    # Derive paths from scenedir.
     scene_dir = args.scenedir
     input_image_path = scene_dir / "frames"
     output_path = scene_dir
@@ -310,7 +295,6 @@ def run(args: argparse.Namespace) -> None:
     if not input_image_path.is_dir():
         raise SystemExit(f"Error: frames directory not found: {input_image_path}")
 
-    # Define the paths.
     image_dir = output_path / "images"
     mask_dir = output_path / "masks"
     image_dir.mkdir(exist_ok=True, parents=True)
@@ -323,7 +307,6 @@ def run(args: argparse.Namespace) -> None:
     rec_path = output_path / "sparse"
     rec_path.mkdir(exist_ok=True, parents=True)
 
-    # Search for input images.
     pano_image_dir = input_image_path
     pano_image_names = sorted(
         p.relative_to(pano_image_dir).as_posix()
@@ -351,11 +334,7 @@ def run(args: argparse.Namespace) -> None:
         pycolmap.apply_rig_config([rig_config], db)
 
     matching_options = pycolmap.FeatureMatchingOptions()
-    # We have perfect sensor_from_rig poses (except for potential stitching
-    # artifacts by the spherical image provider), so we can perform geometric
-    # verification using rig constraints.
     matching_options.rig_verification = True
-    # The images within a frame do not have overlap due to the provided masks.
     matching_options.skip_image_pairs_in_same_frame = True
     if args.matcher == "sequential":
         pycolmap.match_sequential(
